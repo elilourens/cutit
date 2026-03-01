@@ -1,14 +1,19 @@
 """
-Proxy router — mirrors Mistral cloud endpoints on localhost:8080.
+Proxy router — mirrors AI provider cloud endpoints on localhost:8080.
 
 Request flow:
-  Client → localhost:8080/v1/... → [local screening] → api.mistral.ai/v1/... → [restore] → Client
+  Client → localhost:8080/v1/... → [local screening] → <provider>/v1/... → [restore] → Client
+
+Provider is detected from the model name in the request body, or the X-Provider
+header (e.g. X-Provider: openai). Supported providers: mistral, openai, anthropic,
+gemini, groq, xai.
 
 WebSocket events are broadcast to the dashboard at each stage so the
 pipeline view stays live.
 """
 import json
 import uuid
+from dataclasses import dataclass, field
 
 import httpx
 from fastapi import APIRouter, Request
@@ -34,7 +39,95 @@ _HOP_HEADERS = {
     "te",
     "trailers",
     "upgrade",
+    "accept-encoding",  # Let httpx negotiate encoding — it knows what it can decompress
+    "x-provider",       # Internal routing header, never forwarded
 }
+
+
+# ── Provider registry ──────────────────────────────────────────────────────────
+
+@dataclass
+class ProviderConfig:
+    base_url: str
+    api_key_attr: str                   # attribute name on `settings`
+    auth_header: str = "Authorization"
+    auth_prefix: str = "Bearer "
+    extra_headers: dict = field(default_factory=dict)
+
+
+_PROVIDERS: dict[str, ProviderConfig] = {
+    "openai": ProviderConfig(
+        base_url="https://api.openai.com",
+        api_key_attr="openai_api_key",
+    ),
+    "anthropic": ProviderConfig(
+        base_url="https://api.anthropic.com",
+        api_key_attr="anthropic_api_key",
+        auth_header="x-api-key",
+        auth_prefix="",
+        extra_headers={"anthropic-version": "2023-06-01"},
+    ),
+    "gemini": ProviderConfig(
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+        api_key_attr="gemini_api_key",
+    ),
+    "mistral": ProviderConfig(
+        base_url="",           # resolved dynamically from settings.mistral_base_url
+        api_key_attr="mistral_api_key",
+    ),
+    "groq": ProviderConfig(
+        base_url="https://api.groq.com/openai",
+        api_key_attr="groq_api_key",
+    ),
+    "xai": ProviderConfig(
+        base_url="https://api.x.ai",
+        api_key_attr="xai_api_key",
+    ),
+}
+
+# Model prefix → provider (sorted longest-first so more-specific prefixes win)
+_MODEL_MAP: list[tuple[str, str]] = sorted([
+    ("claude",       "anthropic"),
+    ("open-mistral", "mistral"),
+    ("ministral",    "mistral"),
+    ("codestral",    "mistral"),
+    ("mistral",      "mistral"),
+    ("gpt-",         "openai"),
+    ("o1",           "openai"),
+    ("o3",           "openai"),
+    ("o4",           "openai"),
+    ("chatgpt",      "openai"),
+    ("gemini",       "gemini"),
+    ("grok",         "xai"),
+    ("llama",        "groq"),
+    ("mixtral",      "groq"),
+    ("gemma",        "groq"),
+    ("qwen",         "groq"),
+    ("deepseek",     "groq"),
+], key=lambda x: -len(x[0]))
+
+
+def _detect_provider(body: dict | None, req_headers: dict) -> str:
+    """Return provider key from X-Provider header or model name. Default: mistral."""
+    explicit = req_headers.get("x-provider", "").lower().strip()
+    if explicit in _PROVIDERS:
+        return explicit
+    model = (body or {}).get("model", "").lower()
+    for prefix, provider in _MODEL_MAP:
+        if model.startswith(prefix):
+            return provider
+    return "mistral"
+
+
+def _build_target(provider: str, path: str) -> tuple[str, dict]:
+    """Return (target_url, headers_to_inject) for the given provider."""
+    cfg = _PROVIDERS[provider]
+    base = settings.mistral_base_url if provider == "mistral" else cfg.base_url
+    api_key = getattr(settings, cfg.api_key_attr, "").strip()
+    inject: dict[str, str] = {**cfg.extra_headers}
+    if api_key:
+        inject[cfg.auth_header] = f"{cfg.auth_prefix}{api_key}"
+    return f"{base}/v1/{path}", inject
 
 
 # ── Message screening ─────────────────────────────────────────────────────────
@@ -67,6 +160,10 @@ async def _screen_messages(messages: list, session_id: str) -> tuple[list, list]
     all_findings = []
 
     for msg in messages:
+        if msg.get("role") == "system":
+            screened.append(msg)
+            continue
+
         content = msg.get("content", "")
 
         if isinstance(content, str):
@@ -108,6 +205,10 @@ async def proxy(path: str, request: Request):
         except json.JSONDecodeError:
             pass
 
+    # Detect provider from model name / explicit header
+    req_headers_lower = {k.lower(): v for k, v in request.headers.items()}
+    provider = _detect_provider(body, req_headers_lower)
+
     # ── Event: request intercepted ─────────────────────────────────────────
     await manager.broadcast(
         "request_intercepted",
@@ -115,6 +216,7 @@ async def proxy(path: str, request: Request):
             "path": f"/v1/{path}",
             "method": request.method,
             "has_messages": bool(body and "messages" in body),
+            "provider": provider,
         },
         session_id,
     )
@@ -135,11 +237,25 @@ async def proxy(path: str, request: Request):
         body["messages"] = screened_messages
         screened_body = json.dumps(body).encode()
 
+        # Only show findings from the last user message in the dashboard.
+        # We still screen everything for privacy, but conversation history
+        # findings from prior turns shouldn't pollute the display.
+        _last_user_text = ""
+        for msg in reversed(original_messages):
+            if msg.get("role") == "user":
+                c = msg.get("content", "")
+                if isinstance(c, str):
+                    _last_user_text = c
+                elif isinstance(c, list):
+                    _last_user_text = " ".join(p.get("text", "") for p in c if p.get("type") == "text")
+                break
+        display_findings = [f for f in all_findings if f.get("value", "") in _last_user_text]
+
         await manager.broadcast(
             "screening_done",
             {
-                "findings_count": len(all_findings),
-                "findings": all_findings,
+                "findings_count": len(display_findings),
+                "findings": display_findings,
                 "vault_size": len(vault.get_session(session_id)),
             },
             session_id,
@@ -158,23 +274,21 @@ async def proxy(path: str, request: Request):
 
     # ── Build upstream request ─────────────────────────────────────────────
     headers = {
-        k: v
+        k.lower(): v
         for k, v in request.headers.items()
         if k.lower() not in _HOP_HEADERS
     }
-    # Inject API key from env if provided (allows clients to omit it)
-    if settings.mistral_api_key:
-        headers["Authorization"] = f"Bearer {settings.mistral_api_key}"
 
-    target_url = f"{settings.mistral_base_url}/v1/{path}"
+    target_url, auth_headers = _build_target(provider, path)
+    headers.update({k.lower(): v for k, v in auth_headers.items()})
 
     await manager.broadcast(
         "forwarding",
-        {"target": target_url, "redacted_count": len(all_findings)},
+        {"target": target_url, "provider": provider, "redacted_count": len(all_findings)},
         session_id,
     )
 
-    # ── Forward to Mistral cloud ───────────────────────────────────────────
+    # ── Forward to cloud provider ──────────────────────────────────────────
     async with httpx.AsyncClient(timeout=120.0) as client:
         upstream = await client.request(
             method=request.method,
@@ -199,29 +313,60 @@ async def proxy(path: str, request: Request):
 
     try:
         response_text = response_bytes.decode("utf-8")
-        if session_vault:
+        if not session_vault:
+            restored = response_text
+        elif "\ndata:" in response_text or response_text.startswith("data:"):
+            # SSE stream — fakes may be split across chunks, so reassemble
+            # the full text, restore, then rewrite as a single content chunk.
+            parts, first_chunk = [], None
+            for line in response_text.splitlines():
+                if not line.startswith("data:"):
+                    continue
+                payload = line[5:].strip()
+                if payload == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(payload)
+                    if first_chunk is None:
+                        first_chunk = chunk
+                    c = chunk["choices"][0]["delta"].get("content") or ""
+                    if c:
+                        parts.append(c)
+                except Exception:
+                    continue
+            full_text = "".join(parts)
+            full_restored = vault.restore(session_id, full_text)
+            restored = full_restored
+            if first_chunk is not None:
+                first_chunk["choices"][0]["delta"] = {"content": full_restored}
+                first_chunk["choices"][0]["finish_reason"] = "stop"
+                sse = f"data: {json.dumps(first_chunk)}\n\ndata: [DONE]\n\n"
+                final_bytes = sse.encode("utf-8")
+            else:
+                final_bytes = response_bytes
+        else:
             restored = vault.restore(session_id, response_text)
             final_bytes = restored.encode("utf-8")
-        else:
-            restored = response_text
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[proxy] response decode/restore error: {e!r}  bytes={len(response_bytes)} prefix={response_bytes[:40]!r}")
 
-    # Broadcast pipeline snapshot whenever there are messages (including image-only)
+    # ── Broadcast pipeline snapshot ────────────────────────────────────────
     if original_messages:
-        def _preview(messages, idx=0):
-            if not messages:
-                return ""
-            c = messages[idx].get("content", "")
+        def _last_user(messages):
+            """Return the last user-role message, falling back to the last message."""
+            user_msgs = [m for m in messages if m.get("role") == "user"]
+            return user_msgs[-1] if user_msgs else (messages[-1] if messages else {})
+
+        def _preview(messages):
+            msg = _last_user(messages)
+            c = msg.get("content", "")
             if isinstance(c, list):
                 texts = [p["text"] for p in c if p.get("type") == "text"]
-                return "\n".join(texts)[:300]
-            return (c if isinstance(c, str) else str(c))[:300]
+                return "\n".join(texts)[:500]
+            return (c if isinstance(c, str) else str(c))[:500]
 
-        def _extract_image(messages, idx=0):
-            if not messages:
-                return None
-            content = messages[idx].get("content", "")
+        def _extract_image(messages):
+            content = _last_user(messages).get("content", "")
             if isinstance(content, list):
                 for part in content:
                     if part.get("type") == "image_url":
@@ -230,23 +375,53 @@ async def proxy(path: str, request: Request):
                             return url
             return None
 
+        def _extract_reply(text: str) -> str:
+            """Pull assistant text from a chat completion — handles both JSON and SSE streams."""
+            if not text:
+                return ""
+            # Non-streaming: single JSON object
+            try:
+                data = json.loads(text)
+                content = data["choices"][0]["message"]["content"]
+                return (content if isinstance(content, str) else str(content))[:500]
+            except Exception:
+                pass
+            # Streaming: accumulate delta.content from SSE lines
+            parts = []
+            for line in text.splitlines():
+                if not line.startswith("data:"):
+                    continue
+                payload = line[5:].strip()
+                if payload == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(payload)
+                    delta = chunk["choices"][0]["delta"]
+                    if delta.get("content"):
+                        parts.append(delta["content"])
+                except Exception:
+                    continue
+            result = "".join(parts)
+            return result[:500] if result else text[:200]
+
         try:
             await manager.broadcast(
                 "pipeline_snapshot",
                 {
                     "original": _preview(original_messages),
                     "screened": _preview(body["messages"]) if body and "messages" in body else "",
-                    "cloud_response": response_text[:300],
-                    "reconstructed": restored[:300],
-                    "findings": len(all_findings),
+                    "cloud_response": (cloud_text := _extract_reply(response_text)),
+                    "reconstructed": vault.restore(session_id, cloud_text) if session_vault else cloud_text,
+                    "findings": len(display_findings),
                     "vault": {k: "●●●●●" for k in session_vault},
                     "original_image": _extract_image(original_messages),
                     "screened_image": _extract_image(body["messages"]) if body and "messages" in body else None,
+                    "provider": provider,
                 },
                 session_id,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[proxy] pipeline_snapshot broadcast error: {e!r}")
 
     # Strip hop-by-hop headers from upstream response
     response_headers = {

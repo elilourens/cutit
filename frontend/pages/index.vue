@@ -19,13 +19,6 @@ const activeSession = computed(() =>
   latestSessions.value.find((s: { id: string }) => s.id === selectedId.value) ?? latestSessions.value[0] ?? null,
 )
 
-const STATUS_COLOR: Record<string, 'neutral' | 'warning' | 'success' | 'error'> = {
-  intercepted: 'neutral',
-  screening:   'warning',
-  forwarding:  'neutral',
-  done:        'success',
-  error:       'error',
-}
 </script>
 
 <template>
@@ -74,11 +67,10 @@ const STATUS_COLOR: Record<string, 'neutral' | 'warning' | 'success' | 'error'> 
             @click="selectedId = session.id"
           >
             {{ session.id.slice(0, 8) }}
-            <UBadge
-              :color="STATUS_COLOR[session.status] ?? 'neutral'"
-              variant="subtle"
-              size="xs"
-            >{{ session.status }}</UBadge>
+            <span
+              class="text-[10px] font-medium px-1.5 py-0.5"
+              :class="selectedId === session.id ? 'bg-white text-black' : 'bg-black text-white'"
+            >{{ session.status }}</span>
             <span v-if="i === 0" class="text-[10px] opacity-60">latest</span>
           </button>
         </div>

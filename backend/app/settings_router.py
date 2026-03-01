@@ -49,17 +49,32 @@ def _write_env(**updates: str) -> None:
 
 class SettingsPayload(BaseModel):
     mistral_api_key: str | None = None
-    elevenlabs_api_key: str | None = None
     mistral_base_url: str | None = None
+    openai_api_key: str | None = None
+    anthropic_api_key: str | None = None
+    gemini_api_key: str | None = None
+    groq_api_key: str | None = None
+    xai_api_key: str | None = None
+    elevenlabs_api_key: str | None = None
 
 
 @router.get("/settings")
 async def get_settings():
     return {
-        "mistral_api_key": _mask(settings.mistral_api_key),
+        "mistral_api_key":    _mask(settings.mistral_api_key),
+        "mistral_base_url":   settings.mistral_base_url,
+        "openai_api_key":     _mask(settings.openai_api_key),
+        "anthropic_api_key":  _mask(settings.anthropic_api_key),
+        "gemini_api_key":     _mask(settings.gemini_api_key),
+        "groq_api_key":       _mask(settings.groq_api_key),
+        "xai_api_key":        _mask(settings.xai_api_key),
         "elevenlabs_api_key": _mask(settings.elevenlabs_api_key),
-        "mistral_base_url": settings.mistral_base_url,
-        "has_mistral_key": bool(settings.mistral_api_key),
+        "has_mistral_key":    bool(settings.mistral_api_key),
+        "has_openai_key":     bool(settings.openai_api_key),
+        "has_anthropic_key":  bool(settings.anthropic_api_key),
+        "has_gemini_key":     bool(settings.gemini_api_key),
+        "has_groq_key":       bool(settings.groq_api_key),
+        "has_xai_key":        bool(settings.xai_api_key),
         "has_elevenlabs_key": bool(settings.elevenlabs_api_key),
     }
 
@@ -68,17 +83,23 @@ async def get_settings():
 async def save_settings(body: SettingsPayload):
     env_updates: dict[str, str] = {}
 
-    if body.mistral_api_key is not None:
-        settings.mistral_api_key = body.mistral_api_key
-        env_updates["MISTRAL_API_KEY"] = body.mistral_api_key
+    _FIELDS: list[tuple[str, str]] = [
+        ("mistral_api_key",   "MISTRAL_API_KEY"),
+        ("mistral_base_url",  "MISTRAL_BASE_URL"),
+        ("openai_api_key",    "OPENAI_API_KEY"),
+        ("anthropic_api_key", "ANTHROPIC_API_KEY"),
+        ("gemini_api_key",    "GEMINI_API_KEY"),
+        ("groq_api_key",      "GROQ_API_KEY"),
+        ("xai_api_key",       "XAI_API_KEY"),
+        ("elevenlabs_api_key","ELEVENLABS_API_KEY"),
+    ]
 
-    if body.elevenlabs_api_key is not None:
-        settings.elevenlabs_api_key = body.elevenlabs_api_key
-        env_updates["ELEVENLABS_API_KEY"] = body.elevenlabs_api_key
-
-    if body.mistral_base_url is not None:
-        settings.mistral_base_url = body.mistral_base_url
-        env_updates["MISTRAL_BASE_URL"] = body.mistral_base_url
+    for attr, env_key in _FIELDS:
+        value = getattr(body, attr)
+        if value is not None:
+            value = value.strip()
+            setattr(settings, attr, value)
+            env_updates[env_key] = value
 
     if env_updates:
         _write_env(**env_updates)

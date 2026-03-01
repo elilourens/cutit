@@ -80,11 +80,13 @@ def _presidio_hits(text: str, entities: List[str] | None = None) -> List[Dict]:
 async def _ollama_hits(text: str) -> List[Dict]:
     """Ask local Ollama to spot contextual PII that patterns miss."""
     prompt = (
-        "Find any personally identifiable information (PII) in the text below "
-        "that a regex engine might miss — names used informally, implied locations, "
-        "account references, credentials, etc.\n"
+        "Find personally identifiable information (PII) in the text below that a regex engine might miss.\n"
+        "PII is data that identifies or could identify a real specific person: names, addresses, "
+        "phone numbers, emails, usernames, account numbers, national IDs, dates of birth, etc.\n"
+        "Do NOT flag: commands, instructions, questions, intents, topics, generic words, "
+        "adjectives, or anything that is not directly tied to a specific individual's identity.\n"
         "Return ONLY a compact JSON array. Each item: "
-        '{"value": "<exact substring>", "type": "<PII type>"}. '
+        '{"value": "<exact substring from text>", "type": "<PII type>"}. '
         "If nothing found return [].\n\n"
         f"TEXT:\n{text}\n\nJSON:"
     )
@@ -108,21 +110,26 @@ async def _make_fake(entity_type: str, original: str) -> str:
     if original in _fake_cache:
         return _fake_cache[original]
 
+    max_words = max(len(original.split()), 4)
     prompt = (
-        f'Generate a realistic fake replacement for this {entity_type}: "{original}". '
-        "Output the replacement value only — one line, no explanation, no quotes, no extra words."
+        f'Replace this {entity_type} with a realistic fake: "{original}". '
+        f"Output ONLY the replacement — no explanation, no punctuation around it, no extra words. "
+        f"Maximum {max_words} words."
     )
     try:
         resp = ollama.generate(
             model=settings.ollama_model,
             prompt=prompt,
-            options={"temperature": 0.8},
+            options={"temperature": 0.8, "num_predict": 20},
         )
         # Take first non-empty line only — discard any explanation the model adds
         fake = next(
             (line.strip().strip("\"'") for line in resp["response"].splitlines() if line.strip()),
             "",
         )
+        # Hard cap: never longer than 2× the original
+        if len(fake) > len(original) * 2:
+            fake = fake[:len(original) * 2].rsplit(" ", 1)[0]
         fake = fake or f"[REDACTED_{entity_type}]"
     except Exception:
         fake = f"[REDACTED_{entity_type}]"
@@ -157,8 +164,6 @@ async def screen_text(text: str, session_id: str, entities: List[str] | None = N
 
     for hit in sorted(hits, key=lambda h: h["start"], reverse=True):
         original = hit["value"]
-        if original in already_replaced:
-            continue
 
         # Reuse existing fake for this session if we already vaulted it
         fake = vault.fake_for(session_id, original) or await _make_fake(
@@ -170,6 +175,12 @@ async def screen_text(text: str, session_id: str, entities: List[str] | None = N
         findings.append({**hit, "fake": fake, "source": "presidio"})
 
     redacted = "".join(chars)
+
+    # Sweep for any remaining occurrences Presidio's NER missed (e.g. name in quotes)
+    for original in list(already_replaced):
+        fake = vault.fake_for(session_id, original)
+        if fake and original in redacted:
+            redacted = redacted.replace(original, fake)
 
     # ── Pass 2: Ollama contextual ─────────────────────────────────────────────
     ollama_hits = await _ollama_hits(text)  # screen original to get clean spans

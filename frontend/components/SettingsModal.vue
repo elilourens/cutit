@@ -7,28 +7,39 @@ const config = useRuntimeConfig()
 const apiUrl = config.public.apiUrl as string
 
 // ── API Keys tab ──────────────────────────────────────────────────────────────
-const mistralKey = ref('')
-const elevenLabsKey = ref('')
+
+interface ProviderState {
+  key: string
+  hasKey: boolean
+}
+
+const providers = reactive<Record<string, ProviderState>>({
+  mistral:   { key: '', hasKey: false },
+  openai:    { key: '', hasKey: false },
+  anthropic: { key: '', hasKey: false },
+  gemini:    { key: '', hasKey: false },
+  groq:      { key: '', hasKey: false },
+  xai:       { key: '', hasKey: false },
+  elevenlabs:{ key: '', hasKey: false },
+})
+
 const mistralBaseUrl = ref('')
-const hasMistralKey = ref(false)
-const hasElevenLabsKey = ref(false)
 const saving = ref(false)
 const saveMsg = ref('')
 
 async function load() {
   try {
-    const data = await $fetch<{
-      mistral_api_key: string
-      elevenlabs_api_key: string
-      mistral_base_url: string
-      has_mistral_key: boolean
-      has_elevenlabs_key: boolean
-    }>(`${apiUrl}/settings`)
-    hasMistralKey.value = data.has_mistral_key
-    hasElevenLabsKey.value = data.has_elevenlabs_key
-    mistralBaseUrl.value = data.mistral_base_url
-    mistralKey.value = ''
-    elevenLabsKey.value = ''
+    const data = await $fetch<Record<string, any>>(`${apiUrl}/settings`)
+    providers.mistral.hasKey    = data.has_mistral_key
+    providers.openai.hasKey     = data.has_openai_key
+    providers.anthropic.hasKey  = data.has_anthropic_key
+    providers.gemini.hasKey     = data.has_gemini_key
+    providers.groq.hasKey       = data.has_groq_key
+    providers.xai.hasKey        = data.has_xai_key
+    providers.elevenlabs.hasKey = data.has_elevenlabs_key
+    mistralBaseUrl.value        = data.mistral_base_url
+    // Clear inputs after load
+    for (const p of Object.values(providers) as ProviderState[]) p.key = ''
   } catch {}
 }
 
@@ -37,11 +48,13 @@ async function save() {
   saveMsg.value = ''
   try {
     const body: Record<string, string> = {}
-    if (mistralKey.value) body.mistral_api_key = mistralKey.value
-    if (elevenLabsKey.value) body.elevenlabs_api_key = elevenLabsKey.value
-    if (mistralBaseUrl.value) body.mistral_base_url = mistralBaseUrl.value
+    if (providers.mistral.key)    body.mistral_api_key    = providers.mistral.key
+    if (providers.openai.key)     body.openai_api_key     = providers.openai.key
+    
+    if (providers.elevenlabs.key) body.elevenlabs_api_key = providers.elevenlabs.key
+    if (mistralBaseUrl.value)     body.mistral_base_url   = mistralBaseUrl.value
     await $fetch(`${apiUrl}/settings`, { method: 'POST', body })
-    saveMsg.value = 'Saved — keys written to .env'
+    saveMsg.value = 'Saved — keys written to .env restarted the backend to take effect'
     await load()
   } catch {
     saveMsg.value = 'Error saving settings'
@@ -140,6 +153,14 @@ const tabs = [
   { label: 'API Keys', slot: 'api-keys' },
   { label: 'Screening Rules', slot: 'screening' },
 ]
+
+// Provider display metadata
+const PROVIDER_META: Record<string, { label: string; placeholder: string }> = {
+  mistral:    { label: 'Mistral',          placeholder: 'sk-… (leave blank to keep existing)' },
+  openai:     { label: 'OpenAI / ChatGPT', placeholder: 'sk-… (leave blank to keep existing)' },
+  
+  elevenlabs: { label: 'ElevenLabs',       placeholder: '(leave blank to keep existing)' },
+}
 </script>
 
 <template>
@@ -170,34 +191,50 @@ const tabs = [
         <template #api-keys>
           <div class="space-y-4 py-4">
 
-            <!-- Mistral -->
-            <div class="border border-zinc-200 bg-zinc-50 p-4 space-y-2">
+            <!-- AI provider keys -->
+            <div
+              v-for="(id) in ['mistral', 'openai' ]"
+              :key="id"
+              class="border border-zinc-200 bg-zinc-50 p-4 space-y-2"
+            >
               <div class="flex items-center justify-between">
-                <span class="text-sm font-semibold text-zinc-800">Mistral API Key</span>
-                <UBadge v-if="hasMistralKey" color="success" variant="subtle" size="xs">Active</UBadge>
+                <span class="text-sm font-semibold text-zinc-800">{{ PROVIDER_META[id].label }} API Key</span>
+                <UBadge v-if="providers[id].hasKey" color="success" variant="subtle" size="xs">Active</UBadge>
                 <UBadge v-else color="error" variant="subtle" size="xs">Not set</UBadge>
               </div>
-              <UInput v-model="mistralKey" type="password" placeholder="sk-…  (leave blank to keep existing)" class="font-mono text-sm w-full" />
+              <UInput
+                v-model="providers[id].key"
+                type="password"
+                :placeholder="PROVIDER_META[id].placeholder"
+                class="font-mono text-sm w-full"
+              />
+              <!-- Mistral extra: base URL -->
+              <template v-if="id === 'mistral'">
+                <div class="pt-1">
+                  <span class="text-xs text-zinc-500 block mb-1">Base URL</span>
+                  <UInput v-model="mistralBaseUrl" placeholder="https://api.mistral.ai" class="font-mono text-sm w-full" />
+                </div>
+              </template>
             </div>
 
-            <!-- ElevenLabs -->
+            <!-- ElevenLabs (non-AI) -->
             <div class="border border-zinc-200 bg-zinc-50 p-4 space-y-2">
               <div class="flex items-center justify-between">
                 <span class="text-sm font-semibold text-zinc-800">ElevenLabs API Key</span>
-                <UBadge v-if="hasElevenLabsKey" color="success" variant="subtle" size="xs">Active</UBadge>
+                <UBadge v-if="providers.elevenlabs.hasKey" color="success" variant="subtle" size="xs">Active</UBadge>
                 <UBadge v-else color="error" variant="subtle" size="xs">Not set</UBadge>
               </div>
-              <UInput v-model="elevenLabsKey" type="password" placeholder="(leave blank to keep existing)" class="font-mono text-sm w-full" />
-            </div>
-
-            <!-- Base URL -->
-            <div class="border border-zinc-200 bg-zinc-50 p-4 space-y-2">
-              <span class="text-sm font-semibold text-zinc-800">Mistral Base URL</span>
-              <UInput v-model="mistralBaseUrl" placeholder="https://api.mistral.ai" class="font-mono text-sm w-full" />
+              <UInput
+                v-model="providers.elevenlabs.key"
+                type="password"
+                :placeholder="PROVIDER_META.elevenlabs.placeholder"
+                class="font-mono text-sm w-full"
+              />
             </div>
 
             <p class="text-xs text-zinc-400 px-1">
               Keys are saved to <code class="text-zinc-500 bg-zinc-100 px-1 py-0.5 rounded">backend/.env</code> and applied immediately — no restart needed.
+              The proxy routes each request to the correct provider based on the model name.
             </p>
 
             <div class="flex items-center gap-3 pt-1">

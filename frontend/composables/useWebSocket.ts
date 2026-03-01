@@ -24,6 +24,9 @@ export interface SessionState {
   reconstructed: string
   originalImage: string | null
   screenedImage: string | null
+  originalAudio: string | null
+  screenedAudio: string | null
+  redactedSegments: Array<{ start: number; end: number }>
   vault: Record<string, string>
   findings: Finding[]
   findingsCount: number
@@ -55,6 +58,9 @@ export const useWebSocket = () => {
         reconstructed: '',
         originalImage: null,
         screenedImage: null,
+        originalAudio: null,
+        screenedAudio: null,
+        redactedSegments: [],
         vault: {},
         findings: [],
         findingsCount: 0,
@@ -117,6 +123,9 @@ export const useWebSocket = () => {
         session.reconstructed = (d.reconstructed as string) ?? ''
         session.originalImage = (d.original_image as string) ?? null
         session.screenedImage = (d.screened_image as string) ?? null
+        session.originalAudio = (d.original_audio as string) ?? null
+        session.screenedAudio = (d.screened_audio as string) ?? null
+        session.redactedSegments = (d.redacted_segments as unknown as Array<{ start: number; end: number }>) ?? []
         session.findingsCount = (d.findings as number) ?? session.findingsCount
         if (d.vault && typeof d.vault === 'object') {
           session.vault = d.vault as Record<string, string>

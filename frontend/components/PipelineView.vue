@@ -5,13 +5,6 @@ defineProps<{
   sessions: SessionState[]
 }>()
 
-const STATUS_COLOR: Record<string, 'neutral' | 'warning' | 'success' | 'error'> = {
-  intercepted: 'neutral',
-  screening:   'warning',
-  forwarding:  'neutral',
-  done:        'success',
-  error:       'error',
-}
 
 function short(sid: string) {
   return sid.slice(0, 8)
@@ -30,15 +23,16 @@ function highlightText(text: string, findings: Finding[]): Segment[] {
   const allSpans: { start: number; end: number; entity_type: string }[] = []
 
   for (const f of findings ?? []) {
-    if (f.start !== undefined && f.end !== undefined && f.end > f.start) {
-      allSpans.push({ start: f.start, end: f.end, entity_type: f.entity_type })
-    }
-    else if (f.value) {
+    if (f.value) {
+      // Text-search for all occurrences so repeated values are all highlighted
       let idx = text.indexOf(f.value)
       while (idx !== -1) {
         allSpans.push({ start: idx, end: idx + f.value.length, entity_type: f.entity_type })
         idx = text.indexOf(f.value, idx + f.value.length)
       }
+    }
+    else if (f.start !== undefined && f.end !== undefined && f.end > f.start) {
+      allSpans.push({ start: f.start, end: f.end, entity_type: f.entity_type })
     }
   }
 
@@ -79,9 +73,9 @@ function highlightText(text: string, findings: Finding[]): Segment[] {
     <div v-for="session in sessions" :key="session.id" class="border border-zinc-200">
 
       <!-- Session header -->
-      <div class="flex items-center gap-2 px-4 py-2 border-b border-zinc-200">
+      <div class="flex items-center gap-2 px-4 py-2 border-b border-zinc-200 bg-zinc-50">
         <span class="font-mono text-xs text-zinc-400">{{ short(session.id) }}</span>
-        <UBadge :color="STATUS_COLOR[session.status] ?? 'neutral'" variant="subtle" size="xs">
+        <UBadge color="neutral" variant="solid" size="xs">
           {{ session.status }}
         </UBadge>
         <span v-if="session.findingsCount > 0" class="text-xs text-zinc-500">
@@ -89,32 +83,43 @@ function highlightText(text: string, findings: Finding[]): Segment[] {
         </span>
       </div>
 
-      <!-- 5-step grid -->
-      <div class="grid grid-cols-5 divide-x divide-zinc-200">
+      <!-- 5-step grid (4 cols for audio, 5 for text/image) -->
+      <div :class="session.originalAudio ? 'grid grid-cols-4' : 'grid grid-cols-5'" class="divide-x divide-zinc-200">
 
         <!-- Step 1: Original -->
         <div class="p-4 space-y-3">
           <div class="flex items-center gap-2">
             <span class="text-xs font-semibold text-black">Original</span>
-            <UBadge color="success" variant="subtle" size="xs">LOCAL</UBadge>
+            <UBadge color="neutral" variant="solid" size="xs">LOCAL</UBadge>
           </div>
+          <AudioWaveform
+            v-if="session.originalAudio"
+            :src="session.originalAudio"
+            :redacted-segments="[]"
+          />
           <img
             v-if="session.originalImage"
             :src="session.originalImage"
             class="w-full border border-zinc-200 object-contain max-h-40"
             alt="original image"
           />
-          <p v-if="session.original" class="font-mono text-xs text-zinc-700 whitespace-pre-wrap break-words leading-relaxed">{{ session.original }}</p>
-          <p v-if="!session.original && !session.originalImage" class="text-xs text-zinc-300">—</p>
+          <p v-if="session.original && !session.originalAudio" class="font-mono text-xs text-zinc-700 whitespace-pre-wrap break-words leading-relaxed">{{ session.original }}</p>
+          <p v-if="!session.original && !session.originalImage && !session.originalAudio" class="text-xs text-zinc-300">—</p>
         </div>
 
         <!-- Step 2: Flagged -->
         <div class="p-4 space-y-3">
           <div class="flex items-center gap-2">
             <span class="text-xs font-semibold text-black">Flagged</span>
-            <UBadge color="warning" variant="subtle" size="xs">LOCAL</UBadge>
+            <UBadge color="neutral" variant="solid" size="xs">LOCAL</UBadge>
           </div>
-          <p v-if="session.original" class="font-mono text-xs whitespace-pre-wrap break-words leading-relaxed">
+          <AudioWaveform
+            v-if="session.originalAudio"
+            :src="session.originalAudio"
+            :redacted-segments="session.redactedSegments"
+            :show-legend="false"
+          />
+          <p v-if="session.original && !session.originalAudio" class="font-mono text-xs whitespace-pre-wrap break-words leading-relaxed">
             <template v-for="(seg, i) in highlightText(session.original, session.findings)" :key="i">
               <span
                 v-if="seg.highlighted"
@@ -124,13 +129,22 @@ function highlightText(text: string, findings: Finding[]): Segment[] {
               <span v-else class="text-zinc-700">{{ seg.text }}</span>
             </template>
           </p>
-          <p v-if="!session.original" class="text-xs text-zinc-300">—</p>
+          <p v-if="!session.original && !session.originalAudio" class="text-xs text-zinc-300">—</p>
           <div v-if="session.findings.length" class="text-[10px] space-y-0.5 pt-1 border-t border-zinc-100">
-            <div v-for="(f, i) in session.findings" :key="i" class="flex items-center gap-1 flex-wrap">
-              <span class="text-amber-600 font-medium">{{ f.entity_type }}</span>
-              <span class="text-zinc-300">→</span>
-              <span class="font-mono text-zinc-500">{{ f.fake }}</span>
-            </div>
+            <!-- Audio: show entity types only (no fake replacements) -->
+            <template v-if="session.originalAudio">
+              <div v-for="type in [...new Set<string>(session.findings.map((f: Finding) => f.entity_type))]" :key="type">
+                <span class="text-amber-600 font-medium">{{ type }}</span>
+              </div>
+            </template>
+            <!-- Text/image: show entity_type → fake -->
+            <template v-else>
+              <div v-for="(f, i) in session.findings.filter((f: Finding, i: number, arr: Finding[]) => arr.findIndex((x: Finding) => x.entity_type === f.entity_type && x.fake === f.fake) === i)" :key="i" class="flex items-center gap-1 flex-wrap">
+                <span class="text-amber-600 font-medium">{{ f.entity_type }}</span>
+                <span class="text-zinc-300">→</span>
+                <span class="font-mono text-zinc-500">{{ f.fake }}</span>
+              </div>
+            </template>
           </div>
         </div>
 
@@ -138,18 +152,23 @@ function highlightText(text: string, findings: Finding[]): Segment[] {
         <div class="p-4 space-y-3">
           <div class="flex items-center gap-2">
             <span class="text-xs font-semibold text-black">Censored</span>
-            <UBadge color="success" variant="subtle" size="xs">LOCAL</UBadge>
+            <UBadge color="neutral" variant="solid" size="xs">LOCAL</UBadge>
           </div>
+          <AudioWaveform
+            v-if="session.screenedAudio"
+            :src="session.screenedAudio"
+            :redacted-segments="session.redactedSegments"
+          />
           <img
             v-if="session.screenedImage"
             :src="session.screenedImage"
             class="w-full border border-zinc-200 object-contain max-h-40"
             alt="censored image"
           />
-          <p v-if="session.screened" class="font-mono text-xs text-zinc-700 whitespace-pre-wrap break-words leading-relaxed">{{ session.screened }}</p>
-          <p v-if="!session.screened && !session.screenedImage" class="text-xs text-zinc-300">—</p>
+          <p v-if="session.screened && !session.screenedAudio" class="font-mono text-xs text-zinc-700 whitespace-pre-wrap break-words leading-relaxed">{{ session.screened }}</p>
+          <p v-if="!session.screened && !session.screenedImage && !session.screenedAudio" class="text-xs text-zinc-300">—</p>
           <p v-if="session.findingsCount > 0" class="text-[10px] text-zinc-400 pt-1 border-t border-zinc-100">
-            {{ session.findingsCount }} value(s) replaced with fakes
+            {{ session.findingsCount > 0 ? `${session.findingsCount} word(s) bleeped` : '' }}
           </p>
         </div>
 
@@ -157,17 +176,17 @@ function highlightText(text: string, findings: Finding[]): Segment[] {
         <div class="p-4 space-y-3">
           <div class="flex items-center gap-2">
             <span class="text-xs font-semibold text-black">Cloud Response</span>
-            <UBadge color="error" variant="subtle" size="xs">CLOUD</UBadge>
+            <UBadge color="neutral" variant="solid" size="xs">CLOUD</UBadge>
           </div>
           <p v-if="session.cloudResponse" class="font-mono text-xs text-zinc-700 whitespace-pre-wrap break-words leading-relaxed">{{ session.cloudResponse }}</p>
           <p v-else class="text-xs text-zinc-300">—</p>
         </div>
 
-        <!-- Step 4: Reconstructed -->
-        <div class="p-4 space-y-3">
+        <!-- Step 4: Reconstructed (hidden for audio sessions) -->
+        <div v-if="!session.originalAudio" class="p-4 space-y-3">
           <div class="flex items-center gap-2">
             <span class="text-xs font-semibold text-black">Reconstructed</span>
-            <UBadge color="success" variant="subtle" size="xs">LOCAL</UBadge>
+            <UBadge color="neutral" variant="solid" size="xs">LOCAL</UBadge>
           </div>
           <p v-if="session.reconstructed" class="font-mono text-xs text-zinc-700 whitespace-pre-wrap break-words leading-relaxed">{{ session.reconstructed }}</p>
           <p v-else class="text-xs text-zinc-300">—</p>
