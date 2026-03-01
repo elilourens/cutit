@@ -94,11 +94,15 @@ async def screen_audio(
     Returns (bleeped_audio, redacted_transcript, findings).
     """
     from app.screening.text import screen_text
+    from app.screening.entity_settings import get as get_entities
+
+    if not get_entities("audio"):
+        return audio, "", []
 
     word_infos = transcribe(audio)
     full_text = " ".join(w["word"] for w in word_infos)
 
-    redacted_text, findings = await screen_text(full_text, session_id)
+    redacted_text, findings = await screen_text(full_text, session_id, entities=get_entities("audio"))
 
     # Identify which words were replaced (no longer present verbatim in redacted text)
     flagged = [w for w in word_infos if w["word"] and w["word"] not in redacted_text]

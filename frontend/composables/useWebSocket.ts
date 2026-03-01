@@ -40,7 +40,7 @@ export const useWebSocket = () => {
 
   const latestSessions = computed(() =>
     Object.values(sessions.value)
-      .sort((a, b) => b.events.length - a.events.length)
+      .sort((a, b) => (b.events[0]?.timestamp ?? '').localeCompare(a.events[0]?.timestamp ?? ''))
       .slice(0, 10),
   )
 

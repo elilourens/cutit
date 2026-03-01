@@ -47,7 +47,7 @@ function short(sid: string) {
         <div
           v-for="(evt, i) in events"
           :key="`${evt.session_id}-${evt.timestamp}-${i}`"
-          class="flex gap-2 items-start rounded px-2 py-1.5 transition-colors"
+          class="flex gap-2 items-start px-2 py-1.5 transition-colors"
         >
           <UIcon :name="meta(evt.type).icon" class="shrink-0 mt-0.5 w-3.5 h-3.5 text-zinc-400" />
 

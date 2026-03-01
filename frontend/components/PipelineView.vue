@@ -76,7 +76,7 @@ function highlightText(text: string, findings: Finding[]): Segment[] {
     </div>
 
     <!-- One block per session, newest first -->
-    <div v-for="session in sessions" :key="session.id" class="border border-zinc-200 rounded">
+    <div v-for="session in sessions" :key="session.id" class="border border-zinc-200">
 
       <!-- Session header -->
       <div class="flex items-center gap-2 px-4 py-2 border-b border-zinc-200">
@@ -101,7 +101,7 @@ function highlightText(text: string, findings: Finding[]): Segment[] {
           <img
             v-if="session.originalImage"
             :src="session.originalImage"
-            class="w-full rounded border border-zinc-200 object-contain max-h-40"
+            class="w-full border border-zinc-200 object-contain max-h-40"
             alt="original image"
           />
           <p v-if="session.original" class="font-mono text-xs text-zinc-700 whitespace-pre-wrap break-words leading-relaxed">{{ session.original }}</p>
@@ -119,7 +119,7 @@ function highlightText(text: string, findings: Finding[]): Segment[] {
               <span
                 v-if="seg.highlighted"
                 :title="seg.entity_type"
-                class="bg-amber-100 text-amber-800 rounded px-0.5 cursor-help"
+                class="bg-amber-100 text-amber-800 px-0.5 cursor-help"
               >{{ seg.text }}</span>
               <span v-else class="text-zinc-700">{{ seg.text }}</span>
             </template>
@@ -143,7 +143,7 @@ function highlightText(text: string, findings: Finding[]): Segment[] {
           <img
             v-if="session.screenedImage"
             :src="session.screenedImage"
-            class="w-full rounded border border-zinc-200 object-contain max-h-40"
+            class="w-full border border-zinc-200 object-contain max-h-40"
             alt="censored image"
           />
           <p v-if="session.screened" class="font-mono text-xs text-zinc-700 whitespace-pre-wrap break-words leading-relaxed">{{ session.screened }}</p>

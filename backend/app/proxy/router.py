@@ -15,7 +15,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import Response, StreamingResponse
 
 from app.config import settings
-from app.screening.image import screen_image
+from app.screening.image_ocr_nlp import screen_image
 from app.screening.text import screen_text
 from app.vault.store import vault
 from app.ws.manager import manager
@@ -194,45 +194,53 @@ async def proxy(path: str, request: Request):
     # ── Restore real values in response ───────────────────────────────────
     final_bytes = response_bytes
     session_vault = vault.get_session(session_id)
+    response_text = ""
+    restored = ""
 
-    if session_vault:
-        try:
-            response_text = response_bytes.decode("utf-8")
+    try:
+        response_text = response_bytes.decode("utf-8")
+        if session_vault:
             restored = vault.restore(session_id, response_text)
             final_bytes = restored.encode("utf-8")
+        else:
+            restored = response_text
+    except Exception:
+        pass
 
-            # Broadcast pipeline snapshot to dashboard
-            def _preview(messages, idx=0):
-                if not messages:
-                    return ""
-                c = messages[idx].get("content", "")
-                if isinstance(c, list):
-                    texts = [p["text"] for p in c if p.get("type") == "text"]
-                    return "\n".join(texts)[:300]
-                return (c if isinstance(c, str) else str(c))[:300]
+    # Broadcast pipeline snapshot whenever there are messages (including image-only)
+    if original_messages:
+        def _preview(messages, idx=0):
+            if not messages:
+                return ""
+            c = messages[idx].get("content", "")
+            if isinstance(c, list):
+                texts = [p["text"] for p in c if p.get("type") == "text"]
+                return "\n".join(texts)[:300]
+            return (c if isinstance(c, str) else str(c))[:300]
 
-            def _extract_image(messages, idx=0):
-                if not messages:
-                    return None
-                content = messages[idx].get("content", "")
-                if isinstance(content, list):
-                    for part in content:
-                        if part.get("type") == "image_url":
-                            url = part.get("image_url", {}).get("url", "")
-                            if url.startswith("data:"):
-                                return url
+        def _extract_image(messages, idx=0):
+            if not messages:
                 return None
+            content = messages[idx].get("content", "")
+            if isinstance(content, list):
+                for part in content:
+                    if part.get("type") == "image_url":
+                        url = part.get("image_url", {}).get("url", "")
+                        if url.startswith("data:"):
+                            return url
+            return None
 
+        try:
             await manager.broadcast(
                 "pipeline_snapshot",
                 {
-                    "original": _preview(original_messages) if original_messages else "",
+                    "original": _preview(original_messages),
                     "screened": _preview(body["messages"]) if body and "messages" in body else "",
                     "cloud_response": response_text[:300],
                     "reconstructed": restored[:300],
                     "findings": len(all_findings),
-                    "vault": {k: "●●●●●" for k in session_vault},  # mask real values
-                    "original_image": _extract_image(original_messages) if original_messages else None,
+                    "vault": {k: "●●●●●" for k in session_vault},
+                    "original_image": _extract_image(original_messages),
                     "screened_image": _extract_image(body["messages"]) if body and "messages" in body else None,
                 },
                 session_id,

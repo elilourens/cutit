@@ -23,12 +23,15 @@ async def _detect_regions(image_b64: str) -> List[Dict]:
     where all coords are in the 0–1 range (top-left origin).
     """
     prompt = (
-        "You are a privacy scanner. Look at this image for sensitive or personally "
-        "identifying content: faces, names, IDs, documents, license plates, "
-        "addresses, financial information, medical records.\n"
+        "You are a privacy scanner. Identify sensitive or personally identifying content "
+        "in this image: faces, names, IDs, documents, license plates, addresses, "
+        "financial information, medical records.\n"
         "Return ONLY a JSON array. Each item must have:\n"
         '  {"label": "<what it is>", "x": <0-1>, "y": <0-1>, "w": <0-1>, "h": <0-1>}\n'
         "where x,y is the top-left corner and w,h are width/height, all normalised 0–1.\n"
+        "IMPORTANT: Draw the tightest possible box around each sensitive element only. "
+        "For a face, box just the face — not the head, neck, or body. "
+        "Do not add padding or include surrounding areas.\n"
         "If nothing sensitive is found, return []."
     )
     try:

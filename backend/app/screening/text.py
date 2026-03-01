@@ -14,6 +14,7 @@ from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
 from presidio_anonymizer import AnonymizerEngine
 
 from app.config import settings
+from app.screening.entity_settings import get as get_entities
 from app.vault.store import vault
 
 # ── Presidio setup ────────────────────────────────────────────────────────────
@@ -58,9 +59,12 @@ _fake_cache: Dict[str, str] = {}
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _presidio_hits(text: str) -> List[Dict]:
+def _presidio_hits(text: str, entities: List[str] | None = None) -> List[Dict]:
     """Return Presidio findings as a list of dicts with span info."""
-    results = analyzer.analyze(text=text, entities=PRESIDIO_ENTITIES, language="en")
+    active = entities if entities is not None else get_entities("text")
+    if not active:
+        return []
+    results = analyzer.analyze(text=text, entities=active, language="en")
     return [
         {
             "entity_type": r.entity_type,
@@ -129,7 +133,7 @@ async def _make_fake(entity_type: str, original: str) -> str:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-async def screen_text(text: str, session_id: str) -> Tuple[str, List[Dict]]:
+async def screen_text(text: str, session_id: str, entities: List[str] | None = None) -> Tuple[str, List[Dict]]:
     """
     Screen *text* for PII.  Returns (redacted_text, findings).
 
@@ -140,11 +144,15 @@ async def screen_text(text: str, session_id: str) -> Tuple[str, List[Dict]]:
     if not text or not text.strip():
         return text, []
 
+    active_entities = entities if entities is not None else get_entities("text")
+    if not active_entities:
+        return text, []
+
     findings: List[Dict] = []
     already_replaced: set = set()
 
     # ── Pass 1: Presidio (span-based, most accurate) ─────────────────────────
-    hits = _presidio_hits(text)
+    hits = _presidio_hits(text, entities=entities)
     chars = list(text)
 
     for hit in sorted(hits, key=lambda h: h["start"], reverse=True):

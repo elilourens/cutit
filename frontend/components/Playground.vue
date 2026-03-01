@@ -1,5 +1,5 @@
 <template>
-  <div class="mb-5 border border-zinc-200 rounded">
+  <div class="mb-5 border border-zinc-200">
     <div class="flex items-center gap-2 px-4 py-3 border-b border-zinc-200">
       <UIcon name="i-heroicons-beaker" class="w-4 h-4 text-zinc-400" />
       <span class="font-semibold text-sm text-black">Playground</span>
@@ -16,8 +16,8 @@
       />
 
       <!-- Image preview -->
-      <div v-if="imageDataUrl" class="flex items-start gap-3 p-3 rounded border border-zinc-200">
-        <img :src="imageDataUrl" class="h-14 w-14 object-cover rounded border border-zinc-200" alt="attached image" />
+      <div v-if="imageDataUrl" class="flex items-start gap-3 p-3 border border-zinc-200">
+        <img :src="imageDataUrl" class="h-14 w-14 object-cover border border-zinc-200" alt="attached image" />
         <div class="flex-1 min-w-0">
           <p class="text-xs text-zinc-600 truncate font-mono">{{ imageName }}</p>
           <p class="text-xs text-zinc-400 mt-0.5">Will be screened for visual PII before sending</p>
@@ -63,7 +63,9 @@
           label="Send through proxy"
           icon="i-heroicons-paper-airplane"
           size="sm"
-          color="primary"
+          color="neutral"
+          variant="ghost"
+          class="text-black"
           :loading="sending"
           :disabled="!canSend"
           @click="send"

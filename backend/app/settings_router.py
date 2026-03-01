@@ -7,6 +7,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.config import settings
+from app.screening.entity_settings import ALL_ENTITIES, get_all, set_all, reset as reset_entities
 
 router = APIRouter()
 
@@ -83,3 +84,27 @@ async def save_settings(body: SettingsPayload):
         _write_env(**env_updates)
 
     return {"saved": True}
+
+
+# ── Screening entity settings ──────────────────────────────────────────────────
+
+class EntityPayload(BaseModel):
+    text: list[str]
+    image: list[str]
+    audio: list[str]
+
+
+@router.get("/settings/entities")
+async def get_entity_settings():
+    return {"entities": get_all(), "all_entities": ALL_ENTITIES}
+
+
+@router.post("/settings/entities")
+async def save_entity_settings(body: EntityPayload):
+    set_all(body.text, body.image, body.audio)
+    return {"saved": True}
+
+
+@router.post("/settings/entities/reset")
+async def reset_entity_settings():
+    return {"entities": reset_entities()}

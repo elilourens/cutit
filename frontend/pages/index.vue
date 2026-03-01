@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 
-const { sessions, latestSessions, connected } = useWebSocket()
+const { latestSessions, connected } = useWebSocket()
 
 useHead({ title: 'Cut It — Privacy-first AI Proxy' })
 
@@ -40,26 +40,10 @@ const STATUS_COLOR: Record<string, 'neutral' | 'warning' | 'success' | 'error'> 
       </div>
 
       <div class="ml-auto flex items-center gap-3">
-        <UBadge color="success" variant="subtle" size="sm">
-          <span class="flex items-center gap-1.5">
-            <span class="w-1.5 h-1.5 rounded-full bg-current" />
-            Local Screening ON
-          </span>
-        </UBadge>
-
-        <UBadge color="error" variant="subtle" size="sm">
-          <span class="flex items-center gap-1.5">
-            <UIcon name="i-heroicons-cloud" class="w-3 h-3" />
-            Cloud: Clean Only
-          </span>
-        </UBadge>
-
-        <UBadge :color="connected ? 'success' : 'error'" variant="subtle" size="sm">
-          <span class="flex items-center gap-1.5">
-            <span class="w-1.5 h-1.5 rounded-full bg-current" :class="connected ? 'animate-pulse' : ''" />
-            {{ connected ? 'Connected' : 'Reconnecting' }}
-          </span>
-        </UBadge>
+        <span class="flex items-center gap-1.5 px-2.5 py-1 bg-black text-white text-xs font-medium">
+          <span class="w-1.5 h-1.5 bg-white" :class="connected ? 'animate-[pulse_2s_ease-in-out_infinite]' : 'opacity-40'" />
+          {{ connected ? 'Connected' : 'Reconnecting' }}
+        </span>
 
         <UButton icon="i-heroicons-cog-6-tooth" variant="ghost" color="neutral" size="sm" class="text-black" @click="settingsOpen = true" />
       </div>
@@ -83,7 +67,7 @@ const STATUS_COLOR: Record<string, 'neutral' | 'warning' | 'success' | 'error'> 
           <button
             v-for="(session, i) in latestSessions"
             :key="session.id"
-            class="flex items-center gap-1.5 font-mono text-xs px-2.5 py-1 rounded border transition-colors"
+            class="flex items-center gap-1.5 font-mono text-xs px-2.5 py-1 border transition-colors"
             :class="selectedId === session.id
               ? 'border-zinc-900 bg-zinc-900 text-white'
               : 'border-zinc-200 text-zinc-500 hover:border-zinc-400 hover:text-zinc-700'"
@@ -101,17 +85,6 @@ const STATUS_COLOR: Record<string, 'neutral' | 'warning' | 'success' | 'error'> 
 
       </div>
 
-      <!-- Vault -->
-      <div class="border-t border-zinc-200">
-        <div class="flex items-center gap-2 px-6 py-2 border-b border-zinc-200">
-          <UIcon name="i-heroicons-lock-closed" class="w-4 h-4 text-zinc-400" />
-          <span class="text-xs font-semibold tracking-widest uppercase text-zinc-500">Vault</span>
-          <span class="text-xs text-zinc-400 ml-1">— fake ↔ real mappings, never sent to cloud</span>
-        </div>
-        <div class="h-48">
-          <VaultInspector :sessions="sessions" />
-        </div>
-      </div>
     </div>
 
   </div>
