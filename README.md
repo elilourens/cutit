@@ -69,7 +69,7 @@ Names, email addresses, phone numbers, physical locations and addresses, credit 
 ```bash
 cd backend
 poetry install
-python -m spacy download en_core_web_lg
+poetry run python -m spacy download en_core_web_lg
 ```
 
 **Frontend**

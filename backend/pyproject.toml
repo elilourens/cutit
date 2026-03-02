@@ -3,7 +3,7 @@ name = "cutit-backend"
 version = "0.1.0"
 description = "Cut It — Privacy-first AI proxy. Local screening, clean data to cloud."
 authors = []
-readme = "README.md"
+package-mode = false
 
 [tool.poetry.dependencies]
 python = "^3.11"

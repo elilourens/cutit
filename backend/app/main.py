@@ -12,7 +12,7 @@ from app.ws.manager import manager
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("✓ Cut It proxy running → http://localhost:8080")
+    print("Cut It proxy running -> http://localhost:8080")
     print("  Configure clients to use http://localhost:8080 instead of api.mistral.ai")
     yield
     print("Cut It proxy shutting down")
