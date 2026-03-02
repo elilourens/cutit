@@ -335,7 +335,7 @@ async def proxy(path: str, request: Request):
                 except Exception:
                     continue
             full_text = "".join(parts)
-            full_restored = vault.restore(session_id, full_text)
+            full_restored = await vault.ollama_restore(session_id, full_text)
             restored = full_restored
             if first_chunk is not None:
                 first_chunk["choices"][0]["delta"] = {"content": full_restored}
@@ -345,8 +345,17 @@ async def proxy(path: str, request: Request):
             else:
                 final_bytes = response_bytes
         else:
-            restored = vault.restore(session_id, response_text)
-            final_bytes = restored.encode("utf-8")
+            # Non-streaming JSON — restore only the message content, not the whole blob
+            try:
+                resp_json = json.loads(response_text)
+                content = resp_json["choices"][0]["message"]["content"]
+                restored_content = await vault.ollama_restore(session_id, content)
+                resp_json["choices"][0]["message"]["content"] = restored_content
+                restored = restored_content
+                final_bytes = json.dumps(resp_json).encode("utf-8")
+            except Exception:
+                restored = vault.restore(session_id, response_text)
+                final_bytes = restored.encode("utf-8")
     except Exception as e:
         print(f"[proxy] response decode/restore error: {e!r}  bytes={len(response_bytes)} prefix={response_bytes[:40]!r}")
 
@@ -411,7 +420,7 @@ async def proxy(path: str, request: Request):
                     "original": _preview(original_messages),
                     "screened": _preview(body["messages"]) if body and "messages" in body else "",
                     "cloud_response": (cloud_text := _extract_reply(response_text)),
-                    "reconstructed": vault.restore(session_id, cloud_text) if session_vault else cloud_text,
+                    "reconstructed": restored if session_vault else cloud_text,
                     "findings": len(display_findings),
                     "vault": {k: "●●●●●" for k in session_vault},
                     "original_image": _extract_image(original_messages),

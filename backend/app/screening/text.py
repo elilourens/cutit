@@ -36,6 +36,40 @@ _cc_relaxed = PatternRecognizer(
 )
 analyzer.registry.add_recognizer(_cc_relaxed)
 
+# Human-readable labels sent to Ollama — must match what Ollama will echo back as "type"
+_ENTITY_LABELS: Dict[str, str] = {
+    "PERSON":          "person name",
+    "EMAIL_ADDRESS":   "email address",
+    "PHONE_NUMBER":    "phone number",
+    "LOCATION":        "location or address",
+    "CREDIT_CARD":     "credit card number",
+    "IBAN_CODE":       "IBAN or bank account number",
+    "IP_ADDRESS":      "IP address",
+    "US_SSN":          "US Social Security Number",
+    "US_PASSPORT":     "US passport number",
+    "DATE_TIME":       "date or time",
+    "NRP":             "nationality, religion, or political affiliation",
+    "URL":             "URL or website",
+    "MEDICAL_LICENSE": "medical license number",
+    "ORGANIZATION":    "organization or company name",
+}
+
+
+def _matches_active(ollama_type: str, active_entities: List[str]) -> bool:
+    """Return True if the Ollama-reported type corresponds to any active Presidio entity."""
+    t = ollama_type.lower().strip()
+    for entity in active_entities:
+        label = _ENTITY_LABELS.get(entity, entity.lower().replace("_", " ")).lower()
+        if t == label or t == entity.lower() or t == entity.lower().replace("_", " "):
+            return True
+        # Partial word overlap handles abbreviations ("address" → "location or address")
+        label_words = {w for w in label.replace("/", " ").replace(",", " ").split() if len(w) > 3}
+        type_words  = {w for w in t.replace("/", " ").replace(",", " ").split()  if len(w) > 3}
+        if label_words & type_words:
+            return True
+    return False
+
+
 PRESIDIO_ENTITIES = [
     "PERSON",
     "EMAIL_ADDRESS",
@@ -77,16 +111,20 @@ def _presidio_hits(text: str, entities: List[str] | None = None) -> List[Dict]:
     ]
 
 
-async def _ollama_hits(text: str) -> List[Dict]:
-    """Ask local Ollama to spot contextual PII that patterns miss."""
+async def _ollama_hits(text: str, active_entities: List[str]) -> List[Dict]:
+    """Ask local Ollama to spot contextual PII that patterns miss, restricted to active entity types."""
+    if not active_entities:
+        return []
+    labels = [_ENTITY_LABELS.get(e, e.lower().replace("_", " ")) for e in active_entities]
+    entity_list = ", ".join(f'"{lbl}"' for lbl in labels)
     prompt = (
         "Find personally identifiable information (PII) in the text below that a regex engine might miss.\n"
-        "PII is data that identifies or could identify a real specific person: names, addresses, "
-        "phone numbers, emails, usernames, account numbers, national IDs, dates of birth, etc.\n"
+        f"Only look for these types: {entity_list}.\n"
+        "PII is data that identifies or could identify a real specific person.\n"
         "Do NOT flag: commands, instructions, questions, intents, topics, generic words, "
         "adjectives, or anything that is not directly tied to a specific individual's identity.\n"
         "Return ONLY a compact JSON array. Each item: "
-        '{"value": "<exact substring from text>", "type": "<PII type>"}. '
+        '{"value": "<exact substring from text>", "type": "<one of the listed types>"}. '
         "If nothing found return [].\n\n"
         f"TEXT:\n{text}\n\nJSON:"
     )
@@ -99,7 +137,8 @@ async def _ollama_hits(text: str) -> List[Dict]:
         raw = resp["response"].strip()
         m = re.search(r"\[.*?\]", raw, re.DOTALL)
         if m:
-            return json.loads(m.group())
+            hits = json.loads(m.group())
+            return [h for h in hits if _matches_active(h.get("type", ""), active_entities)]
     except Exception:
         pass
     return []
@@ -183,7 +222,7 @@ async def screen_text(text: str, session_id: str, entities: List[str] | None = N
             redacted = redacted.replace(original, fake)
 
     # ── Pass 2: Ollama contextual ─────────────────────────────────────────────
-    ollama_hits = await _ollama_hits(text)  # screen original to get clean spans
+    ollama_hits = await _ollama_hits(text, active_entities)  # screen original to get clean spans
 
     for hit in ollama_hits:
         original = hit.get("value", "")

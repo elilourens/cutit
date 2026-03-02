@@ -54,7 +54,7 @@ async function save() {
     if (providers.elevenlabs.key) body.elevenlabs_api_key = providers.elevenlabs.key
     if (mistralBaseUrl.value)     body.mistral_base_url   = mistralBaseUrl.value
     await $fetch(`${apiUrl}/settings`, { method: 'POST', body })
-    saveMsg.value = 'Saved — keys written to .env restarted the backend to take effect'
+    saveMsg.value = 'Saved'
     await load()
   } catch {
     saveMsg.value = 'Error saving settings'
@@ -233,7 +233,7 @@ const PROVIDER_META: Record<string, { label: string; placeholder: string }> = {
             </div>
 
             <p class="text-xs text-zinc-400 px-1">
-              Keys are saved to <code class="text-zinc-500 bg-zinc-100 px-1 py-0.5 rounded">backend/.env</code> and applied immediately — no restart needed.
+              Keys are saved to <code class="text-zinc-500 bg-zinc-100 px-1 py-0.5 rounded">backend/.env</code> and applied immediately.
               The proxy routes each request to the correct provider based on the model name.
             </p>
 
